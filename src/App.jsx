@@ -353,12 +353,12 @@ function Dashboard({ entries, settings, onAdd }) {
         </div>
         <div className="h-72 w-full">
           {chartData.length ? <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 14, right: 0, left: -18, bottom: 0 }}>
+            <ComposedChart data={chartData} margin={{ top: 14, right: 8, left: 8, bottom: 0 }}>
               <defs><linearGradient id="glucoseFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#34d399" stopOpacity={0.25} /><stop offset="100%" stopColor="#34d399" stopOpacity={0} /></linearGradient></defs>
               <CartesianGrid stroke="#1e293b" strokeDasharray="3 6" vertical={false} />
               <ReferenceArea yAxisId="glucose" y1={displayThreshold(3.9, settings.unit)} y2={displayThreshold(10, settings.unit)} fill="#10b981" fillOpacity={0.05} />
               <XAxis dataKey="time" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={(value) => new Date(value).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} minTickGap={32} />
-              <YAxis yAxisId="glucose" domain={axisDomain(settings.unit)} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={34} />
+              <YAxis yAxisId="glucose" domain={axisDomain(settings.unit)} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={42} tickMargin={6} />
               <Tooltip
                 content={({ active, label, payload }) => {
                   if (!active || !payload?.length) return null;
