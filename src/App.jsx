@@ -250,17 +250,45 @@ function Dashboard({ entries, settings, onAdd }) {
   const records = dexcom?.records || [];
   const latest = dexcom?.latest || records[records.length - 1] || null;
   const iob = calculateIob(entries, now, settings.durationHours);
-  const chartData = records.map((record) => {
+  const glucosePoints = records.map((record) => {
     const time = new Date(record.systemTime || record.displayTime).getTime();
     return {
       time,
       glucose: dexcomValueToDisplay(record.value, record.unit || "mg/dL", settings.unit),
-      iob: Number(calculateIob(entries, time, settings.durationHours).toFixed(2)),
     };
   }).filter((point) => Number.isFinite(point.time) && Number.isFinite(point.glucose));
 
+  // Eigene 5-Minuten-Zeitachse für IOB, damit sich die orange Kurve sichtbar
+  // über die gesamte gewählte Zeitspanne bis jetzt bewegt.
+  const rangeStart = now - range * 60 * 60 * 1000;
+  const timeline = [];
+  for (let time = rangeStart; time <= now; time += 5 * 60 * 1000) {
+    timeline.push(time);
+  }
+  if (timeline[timeline.length - 1] !== now) timeline.push(now);
+
+  const nearestGlucose = (time) => {
+    if (!glucosePoints.length) return null;
+    const nearest = glucosePoints.reduce((best, point) =>
+      Math.abs(point.time - time) < Math.abs(best.time - time) ? point : best,
+      glucosePoints[0]
+    );
+    // Nur als Glukosepunkt übernehmen, wenn eine Dexcom-Messung höchstens 3 Minuten entfernt ist.
+    return Math.abs(nearest.time - time) <= 3 * 60 * 1000 ? nearest.glucose : null;
+  };
+
+  const chartData = timeline.map((time) => ({
+    time,
+    glucose: nearestGlucose(time),
+    iob: Number(calculateIob(entries, time, settings.durationHours).toFixed(2)),
+  }));
+
   const currentValue = latest ? dexcomValueToDisplay(latest.value, latest.unit || "mg/dL", settings.unit) : "--";
-  const visibleInsulin = entries.filter((entry) => entry.type === "insulin" && now - new Date(entry.timestamp).getTime() <= range * 3600000);
+  const visibleInsulin = entries.filter((entry) => {
+    if (entry.type !== "insulin") return false;
+    const time = new Date(entry.timestamp).getTime();
+    return time >= rangeStart && time <= now;
+  });
   const recentDose = [...entries].filter((entry) => entry.type === "insulin").sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0];
 
   return (
@@ -312,13 +340,35 @@ function Dashboard({ entries, settings, onAdd }) {
               <Line yAxisId="iob" type="monotone" dataKey="iob" stroke="#fb923c" strokeWidth={2.5} dot={false} isAnimationActive={false} />
               {visibleInsulin.map((entry) => {
                 const target = new Date(entry.timestamp).getTime();
-                const point = chartData.reduce((best, item) => Math.abs(item.time - target) < Math.abs(best.time - target) ? item : best, chartData[0]);
-                return <ReferenceDot key={entry.id} yAxisId="glucose" x={target} y={point.glucose} r={5} fill={insulinCatalog[entry.insulin].color} stroke="#020617" strokeWidth={2} />;
+                const glucoseCandidates = chartData.filter((item) => item.glucose !== null);
+                if (!glucoseCandidates.length) return null;
+                const point = glucoseCandidates.reduce((best, item) =>
+                  Math.abs(item.time - target) < Math.abs(best.time - target) ? item : best,
+                  glucoseCandidates[0]
+                );
+                return (
+                  <ReferenceDot
+                    key={entry.id}
+                    yAxisId="glucose"
+                    x={target}
+                    y={point.glucose}
+                    r={entry.insulin === "Toujeo" ? 7 : 6}
+                    fill={insulinCatalog[entry.insulin]?.color || "#a78bfa"}
+                    stroke="#f8fafc"
+                    strokeWidth={2}
+                    label={{
+                      value: `${entry.insulin} ${entry.units} IE`,
+                      position: "top",
+                      fill: insulinCatalog[entry.insulin]?.color || "#a78bfa",
+                      fontSize: 10,
+                    }}
+                  />
+                );
               })}
             </ComposedChart>
           </ResponsiveContainer> : <div className="grid h-full place-items-center text-sm text-slate-500">{loading ? "Dexcom-Daten werden geladen…" : "Keine Glukosewerte verfügbar"}</div>}
         </div>
-        <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-400"><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-emerald-400" />Glukose</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-orange-400" />IOB</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-violet-400" />Insulingabe</span></div>
+        <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-400"><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-emerald-400" />Glukose</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-orange-400" />IOB</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-orange-400" />NovoRapid-Gabe</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-violet-400" />Toujeo-Gabe</span></div>
       </Card>
 
       <div className="grid grid-cols-2 gap-3">
