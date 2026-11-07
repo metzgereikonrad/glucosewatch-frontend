@@ -296,11 +296,14 @@ function Dashboard({ entries, settings, onAdd }) {
       const durationMs = settings.durationHours * 60 * 60 * 1000;
       const anchor = nearestGlucosePoint(doseTime);
       const key = `iob_${entry.id}`;
+      const unitsKey = `iobUnits_${entry.id}`;
       if (!anchor || elapsed < 0 || elapsed > durationMs) {
         point[key] = null;
+        point[unitsKey] = null;
       } else {
         const remaining = 1 - elapsed / durationMs;
         point[key] = Number((glucoseFloor + (anchor.glucose - glucoseFloor) * remaining).toFixed(2));
+        point[unitsKey] = Number((Number(entry.units) * remaining).toFixed(2));
       }
     });
     return point;
@@ -355,15 +358,21 @@ function Dashboard({ entries, settings, onAdd }) {
               <CartesianGrid stroke="#1e293b" strokeDasharray="3 6" vertical={false} />
               <ReferenceArea yAxisId="glucose" y1={displayThreshold(3.9, settings.unit)} y2={displayThreshold(10, settings.unit)} fill="#10b981" fillOpacity={0.05} />
               <XAxis dataKey="time" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={(value) => new Date(value).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} minTickGap={32} />
-              <YAxis yAxisId="glucose" domain={axisDomain(settings.unit)} hide />
+              <YAxis yAxisId="glucose" domain={axisDomain(settings.unit)} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} width={34} />
               <Tooltip
-                contentStyle={{ background: "#020617", border: "1px solid #334155", borderRadius: 14 }}
-                labelFormatter={(value) => new Date(value).toLocaleString("de-DE")}
-                formatter={(value, name, item) => {
-                  if (name === "glucose") return [value, `Glukose (${settings.unit})`];
-                  if (name === "iobActual") return [`${value} IE`, "IOB"];
-                  if (String(name).startsWith("iob_")) return [null, null];
-                  return [value, name];
+                content={({ active, label, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const row = payload[0]?.payload || {};
+                  const glucoseItem = payload.find((item) => item.dataKey === "glucose");
+                  const activeDose = activeNovoRapid.find((entry) => row[`iob_${entry.id}`] != null);
+                  const activeUnits = activeDose ? row[`iobUnits_${activeDose.id}`] : null;
+                  return (
+                    <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs shadow-xl">
+                      <div className="mb-2 text-slate-400">{new Date(label).toLocaleString("de-DE")}</div>
+                      {glucoseItem?.value != null && <div className="text-emerald-300">Glukose: {glucoseItem.value} {settings.unit}</div>}
+                      {activeDose && activeUnits != null && <div className="mt-1 text-orange-300">Aktives NovoRapid: {Number(activeUnits).toFixed(2)} IE</div>}
+                    </div>
+                  );
                 }}
               />
               <Area yAxisId="glucose" type="monotone" dataKey="glucose" stroke="#34d399" strokeWidth={3} fill="url(#glucoseFill)" dot={false} connectNulls isAnimationActive={false} />
