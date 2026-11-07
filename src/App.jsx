@@ -258,31 +258,53 @@ function Dashboard({ entries, settings, onAdd }) {
     };
   }).filter((point) => Number.isFinite(point.time) && Number.isFinite(point.glucose));
 
-  // Eigene 5-Minuten-Zeitachse für IOB, damit sich die orange Kurve sichtbar
-  // über die gesamte gewählte Zeitspanne bis jetzt bewegt.
   const rangeStart = now - range * 60 * 60 * 1000;
   const timeline = [];
-  for (let time = rangeStart; time <= now; time += 5 * 60 * 1000) {
-    timeline.push(time);
-  }
+  for (let time = rangeStart; time <= now; time += 5 * 60 * 1000) timeline.push(time);
   if (timeline[timeline.length - 1] !== now) timeline.push(now);
 
-  const nearestGlucose = (time) => {
+  const nearestGlucosePoint = (time) => {
     if (!glucosePoints.length) return null;
-    const nearest = glucosePoints.reduce((best, point) =>
-      Math.abs(point.time - time) < Math.abs(best.time - time) ? point : best,
+    return glucosePoints.reduce(
+      (best, point) => Math.abs(point.time - time) < Math.abs(best.time - time) ? point : best,
       glucosePoints[0]
     );
-    // Nur als Glukosepunkt übernehmen, wenn eine Dexcom-Messung höchstens 3 Minuten entfernt ist.
-    return Math.abs(nearest.time - time) <= 3 * 60 * 1000 ? nearest.glucose : null;
   };
 
-  const chartData = timeline.map((time) => ({
-    time,
-    glucose: nearestGlucose(time),
-    iob: Number(calculateIob(entries, time, settings.durationHours).toFixed(2)),
-  }));
+  const activeNovoRapid = entries.filter((entry) => {
+    if (entry.type !== "insulin" || entry.insulin !== "NovoRapid") return false;
+    const doseTime = new Date(entry.timestamp).getTime();
+    return doseTime >= rangeStart && doseTime <= now;
+  });
 
+  // Die orange IOB-Linie wird visuell am Glukosewert zum Spritzzeitpunkt verankert.
+  // Sie sinkt im eingestellten Wirkzeitraum zum unteren Diagrammbereich ab.
+  // Die eigentliche IOB-Zahl oben bleibt weiterhin in IE berechnet.
+  const glucoseFloor = settings.unit === "mg/dL" ? 40 : 2.2;
+  const chartData = timeline.map((time) => {
+    const nearest = nearestGlucosePoint(time);
+    const glucose = nearest && Math.abs(nearest.time - time) <= 3 * 60 * 1000 ? nearest.glucose : null;
+    const point = {
+      time,
+      glucose,
+      iobActual: Number(calculateIob(entries, time, settings.durationHours).toFixed(2)),
+    };
+
+    activeNovoRapid.forEach((entry) => {
+      const doseTime = new Date(entry.timestamp).getTime();
+      const elapsed = time - doseTime;
+      const durationMs = settings.durationHours * 60 * 60 * 1000;
+      const anchor = nearestGlucosePoint(doseTime);
+      const key = `iob_${entry.id}`;
+      if (!anchor || elapsed < 0 || elapsed > durationMs) {
+        point[key] = null;
+      } else {
+        const remaining = 1 - elapsed / durationMs;
+        point[key] = Number((glucoseFloor + (anchor.glucose - glucoseFloor) * remaining).toFixed(2));
+      }
+    });
+    return point;
+  });
   const currentValue = latest ? dexcomValueToDisplay(latest.value, latest.unit || "mg/dL", settings.unit) : "--";
   const visibleInsulin = entries.filter((entry) => {
     if (entry.type !== "insulin") return false;
@@ -333,11 +355,32 @@ function Dashboard({ entries, settings, onAdd }) {
               <CartesianGrid stroke="#1e293b" strokeDasharray="3 6" vertical={false} />
               <ReferenceArea yAxisId="glucose" y1={displayThreshold(3.9, settings.unit)} y2={displayThreshold(10, settings.unit)} fill="#10b981" fillOpacity={0.05} />
               <XAxis dataKey="time" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={(value) => new Date(value).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} minTickGap={32} />
-              <YAxis yAxisId="glucose" domain={axisDomain(settings.unit)} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis yAxisId="iob" orientation="right" domain={[0, "auto"]} tick={{ fill: "#fb923c", fontSize: 10 }} axisLine={false} tickLine={false} width={28} />
-              <Tooltip contentStyle={{ background: "#020617", border: "1px solid #334155", borderRadius: 14 }} labelFormatter={(value) => new Date(value).toLocaleString("de-DE")} formatter={(value, name) => [value, name === "glucose" ? settings.unit : "IOB (IE)"]} />
-              <Area yAxisId="glucose" type="monotone" dataKey="glucose" stroke="#34d399" strokeWidth={3} fill="url(#glucoseFill)" dot={false} isAnimationActive={false} />
-              <Line yAxisId="iob" type="monotone" dataKey="iob" stroke="#fb923c" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+              <YAxis yAxisId="glucose" domain={axisDomain(settings.unit)} hide />
+              <Tooltip
+                contentStyle={{ background: "#020617", border: "1px solid #334155", borderRadius: 14 }}
+                labelFormatter={(value) => new Date(value).toLocaleString("de-DE")}
+                formatter={(value, name, item) => {
+                  if (name === "glucose") return [value, `Glukose (${settings.unit})`];
+                  if (name === "iobActual") return [`${value} IE`, "IOB"];
+                  if (String(name).startsWith("iob_")) return [null, null];
+                  return [value, name];
+                }}
+              />
+              <Area yAxisId="glucose" type="monotone" dataKey="glucose" stroke="#34d399" strokeWidth={3} fill="url(#glucoseFill)" dot={false} connectNulls isAnimationActive={false} />
+              {activeNovoRapid.map((entry) => (
+                <Line
+                  key={`line_${entry.id}`}
+                  yAxisId="glucose"
+                  type="monotone"
+                  dataKey={`iob_${entry.id}`}
+                  stroke="#fb923c"
+                  strokeWidth={3}
+                  dot={false}
+                  connectNulls
+                  isAnimationActive={false}
+                  name={`iob_${entry.id}`}
+                />
+              ))}
               {visibleInsulin.map((entry) => {
                 const target = new Date(entry.timestamp).getTime();
                 const glucoseCandidates = chartData.filter((item) => item.glucose !== null);
